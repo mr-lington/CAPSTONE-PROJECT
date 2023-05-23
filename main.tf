@@ -44,6 +44,7 @@ resource "aws_subnet" "capstone-public-subnet-02" {
 resource "aws_subnet" "capstone-private-subnet-01" {
   vpc_id     = aws_vpc.capstone-vpc.id
   cidr_block = "10.0.3.0/24"
+  availability_zone = "eu-west-2a"
 
   tags = {
     Name = "capstone-private-subnet-01"
@@ -54,9 +55,21 @@ resource "aws_subnet" "capstone-private-subnet-01" {
 resource "aws_subnet" "capstone-private-subnet-02" {
   vpc_id     = aws_vpc.capstone-vpc.id
   cidr_block = "10.0.4.0/24"
+  availability_zone = "eu-west-2a"
 
   tags = {
     Name = "capstone-private-subnet-02"
+    created = "Lington"
+  }
+}
+
+resource "aws_subnet" "capstone-private-subnet-03" {
+  vpc_id            = aws_vpc.capstone-vpc.id
+  cidr_block        = "10.0.5.0/24"
+  availability_zone = "eu-west-2c"
+
+  tags = {
+    Name    = "capstone-private-subnet-03"
     created = "Lington"
   }
 }
@@ -228,3 +241,113 @@ resource "aws_security_group" "capstone-Back-end-SG" {
   }
 }
 
+# Create IAM Role and give full s3 Access
+resource "aws_iam_role" "s3_full_access_role" {
+  name = "s3_full_access_role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "s3_full_access_attachment" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+  role       = aws_iam_role.s3_full_access_role.name
+}
+
+# Create DB subnet group
+# it is this subnet group for the DB
+
+resource "aws_db_subnet_group" "capstone-db-group-subnet" {
+  name       = "capstone-db-group-subnet"
+  subnet_ids = [aws_subnet.capstone-private-subnet-01.id, aws_subnet.capstone-private-subnet-02.id, aws_subnet.capstone-private-subnet-03.id]
+  #availability_zone = ["eu-west-2a", "eu-west-2b"]
+
+
+  tags = {
+    Name = "capstone-db-group-subnet"
+  }
+}
+
+# Create Database ( this is cheaper and for instance, only requires two private subnet)
+resource "aws_db_instance" "capstone-database" {
+  allocated_storage      = 10
+  identifier             = "capstone-db"
+  multi_az               = true
+  db_name                = "lingtondb"
+  engine                 = "mysql"
+  engine_version         = "8.0"
+  instance_class         = "db.t2.micro"
+  username               = "lingtondatabase"
+  password               = "test1234"
+  parameter_group_name   = "default.mysql8.0"
+  skip_final_snapshot    = true
+  db_subnet_group_name   = aws_db_subnet_group.capstone-db-group-subnet.id
+  vpc_security_group_ids = [aws_security_group.capstone-Back-end-SG.id]
+
+}
+
+#Create S3 Buckets onem for media and one for code
+#Create capstone S3 Media Bucket   // this is where we can serve our media from like the cloudfront
+resource "aws_s3_bucket" "capstone-media1-bucket" {
+  bucket        = "capstone-media1-bucket"
+  force_destroy = true
+
+  tags = {
+    Name        = "capstone-media1-bucket"
+    Environment = "Devops"
+  }
+}
+
+resource "aws_s3_bucket_acl" "capstone-media1-bucket-acl" {
+  bucket = aws_s3_bucket.capstone-media1-bucket.id
+  acl    = "public-read"
+}
+
+#Attach a policy to Media Bucket   //this policy is to make it public
+resource "aws_s3_bucket_policy" "capstone-media1-bucket-policy" {
+  bucket = aws_s3_bucket.capstone-media1-bucket.id
+  policy = jsonencode({
+    "Version" : "2012-10-17",
+    "Statement" : [
+      {
+        "Sid" : "PublicReadGetObject",
+        "Action" : [
+          "s3:GetObject"
+        ],
+        "Effect" : "Allow",
+        "Resource" : "arn:aws:s3:::capstone-media1-bucket/*",
+        "Principal" = {
+          AWS = "*"
+        }
+      }
+    ]
+    }
+  )
+}
+
+#Create capstone S3 Media Bucket 
+#Create capstone S3 Code Bucket
+resource "aws_s3_bucket" "capstone-code1-bucket" {
+  bucket        = "capstone-code1-bucket"
+  force_destroy = true
+
+  tags = {
+    Name        = "capstone-code1-bucket"
+    Environment = "Devops"
+  }
+}
+
+resource "aws_s3_bucket_acl" "capstone-code1-bucket-acl" {
+  bucket = aws_s3_bucket.capstone-code1-bucket.id
+  acl    = "private"   # this code bucket is not publicly access
+}
